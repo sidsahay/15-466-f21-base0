@@ -186,6 +186,7 @@ bool BouncMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size
                 break;
         }
     }
+
     // on mouse click, fire the B.O.U.N.C. projectile (ball)
     else if (evt.type == SDL_MOUSEBUTTONDOWN) {
         glm::vec2 clip_mouse = glm::vec2(
@@ -195,8 +196,10 @@ bool BouncMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size
 
         // shoot the ball from the player
         ball = player;
-        ball.y -= 0.5f;
         ball_velocity = glm::normalize((clip_to_court * glm::vec3(clip_mouse, 1.0f)) - ball) * 15.0f;
+		// pre-shift the ball a bit so that the player can't cheese by firing upwards
+		const float pre_shift = 0.03f;
+		ball += pre_shift * ball_velocity;
         // ball starts being able to hit the player to cause a B.O.U.N.C. jump
         ball_state = BallState::CAN_HIT;
     }
@@ -205,8 +208,14 @@ bool BouncMode::handle_event(SDL_Event const &evt, glm::uvec2 const &window_size
 }
 
 void BouncMode::update(float elapsed) {
+	// check if the game was won
+	// game is won if player is grounded and touching the right edge
+	if (player_state == PlayerState::GROUND && (player.x + player_radius.x >= 10.0f)) {
+		has_ended = true;
+	}
 
-	static std::mt19937 mt; //mersenne twister pseudo-random number generator
+	// do no updates if game has ended
+	if (has_ended) return;
 
     // ----player state update----
     // only apply gravity when in the air
@@ -217,10 +226,10 @@ void BouncMode::update(float elapsed) {
 
     // apply instantaneous jerk if jumping or B.O.U.N.C. jumping
     if (do_jump) {
-        player_velocity.y = 5.0f;
+        player_velocity.y = jump_velocity;
     }
     if (do_bounce_jump) {
-        player_velocity.y = 10.0f;
+        player_velocity.y = bounce_velocity;
     }
 
     player += elapsed * player_velocity;
@@ -230,9 +239,17 @@ void BouncMode::update(float elapsed) {
     // reset the player to start if the player falls off the map
     // This makes the game extra frustrating. Muhahahaha.
 	if (player.y < -20.0f) {
-        player.x = -10.0f;
-        player.y = 3.0f;
+        player = player_start;
+		deaths++;
     }
+
+	// clamp player to sides
+	if (player.x >= 10.0f) {
+		player.x = 10.0f;
+	}
+	else if (player.x <= -10.0f) {
+		player.x = -10.0f;
+	}
 
 	//----- ball update -----
 
@@ -250,7 +267,7 @@ void BouncMode::update(float elapsed) {
             return false;
         }
         else {
-            //if player is "above" box, set grounded
+            //if player is "above" box, set grounded and attach player to ground
             //don't use edges because of inaccuracies
             if ((box.position.y + box.radius.y) < player.y) {
                 player_state = PlayerState::GROUND;
@@ -270,16 +287,20 @@ void BouncMode::update(float elapsed) {
             return true;
         }
     };
-    bool collided = false;
-    for (const auto& box : boxes) {
-        collided = collided || player_vs_box(box);
-    }
+	{
+		bool collided = false;
+		for (const auto& box : boxes) {
+			collided = collided || player_vs_box(box);
+		}
 
-    // if no collision happened and player was on the gound, player is in the air
-    if (!collided && player_state == PlayerState::GROUND) {
-        player_state = PlayerState::AIR;
-    }
+		// if no collision happened and player was on the gound, player is in the air
+		if (!collided && player_state == PlayerState::GROUND) {
+			player_state = PlayerState::AIR;
+		}
+	}
 
+	// compute ball-and-box collisions
+	// side effect: reflects ball
     auto ball_vs_box = [this](const Box& box) {
 	    //compute area of overlap:
 		glm::vec2 min = glm::max(box.position - box.radius, ball - ball_radius);
@@ -308,20 +329,20 @@ void BouncMode::update(float elapsed) {
 				ball.x = box.position.x - box.radius.x - ball_radius.x;
 				ball_velocity.x = -std::abs(ball_velocity.x);
 			}
-			//warp y velocity based on offset from box.position center:
-			// float vel = (ball.y - box.position.y) / (box.radius.y + ball_radius.y);
-			// ball_velocity.y = glm::mix(ball_velocity.y, vel, 0.75f);
 		}
-
         return true;
     };
+
     for (const auto& box : boxes) {
         ball_vs_box(box);
     }
+
+	// also collision check with ground (unlike player who falls to their doom)
     ball_vs_box(ground);
 
-
-    // player vs ball
+    // compute player-and-ball collision
+	// side effect: can trigger B.O.U.N.C. jumps if this is the
+	// first time that the ball is hitting the player
 	//compute area of overlap:
     glm::vec2 min = glm::max(player - player_radius, ball - ball_radius);
     glm::vec2 max = glm::min(player + player_radius, ball + ball_radius);
@@ -336,108 +357,30 @@ void BouncMode::update(float elapsed) {
             ball_state = BallState::FREE;
         }
     }
-
-	//box.positions:
-	// auto box.position_vs_ball = [this](glm::vec2 const &box.position) {
-	// 	//compute area of overlap:
-	// 	glm::vec2 min = glm::max(box.position - player_radius, ball - ball_radius);
-	// 	glm::vec2 max = glm::min(box.position + player_radius, ball + ball_radius);
-
-	// 	//if no overlap, no collision:
-	// 	if (min.x > max.x || min.y > max.y) return;
-    //     else {
-    //         if (ball_state == BallState::CAN_HIT) {
-    //             do_jump = true;
-    //             ball_state = BallState::FREE;
-    //         }
-    //     }
-
-	// 	if (max.x - min.x > max.y - min.y) {
-	// 		//wider overlap in x => bounce in y direction:
-	// 		if (ball.y > box.position.y) {
-	// 			ball.y = box.position.y + player_radius.y + ball_radius.y;
-	// 			ball_velocity.y = std::abs(ball_velocity.y);
-	// 		} else {
-	// 			ball.y = box.position.y - player_radius.y - ball_radius.y;
-	// 			ball_velocity.y = -std::abs(ball_velocity.y);
-	// 		}
-	// 	} else {
-	// 		//wider overlap in y => bounce in x direction:
-	// 		if (ball.x > box.position.x) {
-	// 			ball.x = box.position.x + player_radius.x + ball_radius.x;
-	// 			ball_velocity.x = std::abs(ball_velocity.x);
-	// 		} else {
-	// 			ball.x = box.position.x - player_radius.x - ball_radius.x;
-	// 			ball_velocity.x = -std::abs(ball_velocity.x);
-	// 		}
-	// 		//warp y velocity based on offset from box.position center:
-	// 		float vel = (ball.y - box.position.y) / (player_radius.y + ball_radius.y);
-	// 		ball_velocity.y = glm::mix(ball_velocity.y, vel, 0.75f);
-	// 	}
-	// };
-	// box.position_vs_ball(player);
-	// box.position_vs_ball(right_box.position);
-
-	// //court walls:
-	// if (ball.y > court_radius.y - ball_radius.y) {
-	// 	ball.y = court_radius.y - ball_radius.y;
-	// 	if (ball_velocity.y > 0.0f) {
-	// 		ball_velocity.y = -ball_velocity.y;
-	// 	}
-	// }
-	// if (ball.y < -court_radius.y + ball_radius.y) {
-	// 	ball.y = -court_radius.y + ball_radius.y;
-	// 	if (ball_velocity.y < 0.0f) {
-	// 		ball_velocity.y = -ball_velocity.y;
-	// 	}
-	// }
-
-	// if (ball.x > court_radius.x - ball_radius.x) {
-	// 	ball.x = court_radius.x - ball_radius.x;
-	// 	if (ball_velocity.x > 0.0f) {
-	// 		ball_velocity.x = -ball_velocity.x;
-	// 		left_score += 1;
-	// 	}
-	// }
-	// if (ball.x < -court_radius.x + ball_radius.x) {
-	// 	ball.x = -court_radius.x + ball_radius.x;
-	// 	if (ball_velocity.x < 0.0f) {
-	// 		ball_velocity.x = -ball_velocity.x;
-	// 		right_score += 1;
-	// 	}
-	// }
-
-	//----- gradient trails -----
-
-	// //age up all locations in ball trail:
-	// for (auto &t : ball_trail) {
-	// 	t.z += elapsed;
-	// }
-	// //store fresh location at back of ball trail:
-	// ball_trail.emplace_back(ball, 0.0f);
-
-	// //trim any too-old locations from back of trail:
-	// //NOTE: since trail drawing interpolates between points, only removes back element if second-to-back element is too old:
-	// while (ball_trail.size() >= 2 && ball_trail[1].z > trail_length) {
-	// 	ball_trail.pop_front();
-	// }
 }
 
 void BouncMode::draw(glm::uvec2 const &drawable_size) {
 	//some nice colors from the course web page:
 	#define HEX_TO_U8VEC4( HX ) (glm::u8vec4( (HX >> 24) & 0xff, (HX >> 16) & 0xff, (HX >> 8) & 0xff, (HX) & 0xff ))
+	// made bg_color a tad darker for night feel
 	const glm::u8vec4 bg_color = HEX_TO_U8VEC4(0x102538ff);
 	const glm::u8vec4 fg_color = HEX_TO_U8VEC4(0xf2d2b6ff);
+	// made this a bit darker for backgorund buildings
 	const glm::u8vec4 shadow_color = HEX_TO_U8VEC4(0x6b3d32ff);
+	// even darker variant of above
     const glm::u8vec4 shadow2_color = HEX_TO_U8VEC4(0x291713ff);
+	// for rim of moon image
     const glm::u8vec4 moon_outline_color = HEX_TO_U8VEC4(0x347cbaff);
+	// for moon and stars
     const glm::u8vec4 moon_core_color = HEX_TO_U8VEC4(0xffe7e3ff);
-    
+	// for player
+	const glm::u8vec4 player_color = HEX_TO_U8VEC4(0xb3391bff);
+	// for ball
+	const glm::u8vec4 ball_color = HEX_TO_U8VEC4(0xff8161ff);
 	#undef HEX_TO_U8VEC4
 
 	//other useful drawing constants:
 	const float wall_radius = 0.05f;
-	const float shadow_offset = 0.07f;
 	const float padding = 0.14f; //padding between outside of walls and edge of window
 
 	//---- compute vertices to draw ----
@@ -446,6 +389,8 @@ void BouncMode::draw(glm::uvec2 const &drawable_size) {
 	std::vector< Vertex > vertices;
 
 	//inline helper function for rectangle drawing:
+	// extra param: "lean" displaces two vertices to make the rectangle deform to point left or right
+	// also used to make the buildings slightly asymmetrical for extra edginess
 	auto draw_rectangle = [&vertices](glm::vec2 const &center, glm::vec2 const &radius, glm::u8vec4 const &color, float lean) {
 		//draw rectangle as two CCW-oriented triangles:
 		vertices.emplace_back(glm::vec3(center.x-radius.x, center.y-radius.y, 0.0f), color, glm::vec2(0.5f, 0.5f));
@@ -457,18 +402,10 @@ void BouncMode::draw(glm::uvec2 const &drawable_size) {
 		vertices.emplace_back(glm::vec3(center.x-radius.x + (lean < 0 ? lean : 0), center.y+radius.y + (lean < 0 ? -lean :0), 0.0f), color, glm::vec2(0.5f, 0.5f));
 	};
 
-	//shadows for everything (except the trail):
+	// our hero is too edgy to *cast* a shadow
 
-	glm::vec2 s = glm::vec2(0.0f,-shadow_offset);
-
-	// draw_rectangle(glm::vec2(-court_radius.x-wall_radius, 0.0f)+s, glm::vec2(wall_radius, court_radius.y + 2.0f * wall_radius), shadow_color);
-	// draw_rectangle(glm::vec2( court_radius.x+wall_radius, 0.0f)+s, glm::vec2(wall_radius, court_radius.y + 2.0f * wall_radius), shadow_color);
-	// draw_rectangle(glm::vec2( 0.0f,-court_radius.y-wall_radius)+s, glm::vec2(court_radius.x, wall_radius), shadow_color);
-	// draw_rectangle(glm::vec2( 0.0f, court_radius.y+wall_radius)+s, glm::vec2(court_radius.x, wall_radius), shadow_color);
-    draw_rectangle(player+s, player_radius, shadow_color, 0);
-	// draw_rectangle(right_box.position+s, player_radius, shadow_color);
-	draw_rectangle(ball+s, ball_radius, shadow_color, 0);
-
+	// draw night sky
+	// this should probably be done faster in the shader
     for (const auto& star : stars) {
         draw_rectangle(star.position, star.radius, moon_core_color, 0);    
     }
@@ -476,6 +413,7 @@ void BouncMode::draw(glm::uvec2 const &drawable_size) {
     draw_rectangle(moon_outline.position, moon_outline.radius, moon_outline_color, 0);
     draw_rectangle(moon_core.position, moon_core.radius, moon_core_color, 0);
 
+	// draw city back to front
     for (const auto& shadow_box : shadow2_boxes) {
         draw_rectangle(shadow_box.position, shadow_box.radius, shadow2_color, 0.1f);
     }
@@ -484,97 +422,70 @@ void BouncMode::draw(glm::uvec2 const &drawable_size) {
         draw_rectangle(shadow_box.position, shadow_box.radius, shadow_color, 0.1f);
     }
     
+	// draw map
     for (const auto& box : boxes) {
         draw_rectangle(box.position, box.radius, fg_color, 0.1f);
     }
 
-    draw_rectangle(ground.position, ground.radius, fg_color, 0);
+	// draw ground for debug purposes
+    //draw_rectangle(ground.position, ground.radius, fg_color, 0);
 
+	{
+		// check if player is leaning left or right based on direction of motion
+		// lean away, as if being blow back by the wind
+		float player_lean = 0.0f;
+		if (player_velocity.x < 0) {
+			player_lean = 0.05f;
+		}
+		else if (player_velocity.x > 0) {
+			player_lean = -0.05f;
+		}
+		
+		// hyperextended frames for that animation oomph when jumping
+		// interpolate linearly back to normal using frame count
+		// TODO: do this in a frame independent way
+		if (exaggerated_frames) {
+			float lean_factor = 1.0f - (exaggerated_frames * 0.4f) ;
+			player_lean *= lean_factor;
+			exaggerated_frames--;
+		}
 
-
-	//ball's trail:
-	// if (ball_trail.size() >= 2) {
-	// 	//start ti at second element so there is always something before it to interpolate from:
-	// 	std::deque< glm::vec3 >::iterator ti = ball_trail.begin() + 1;
-	// 	//draw trail from oldest-to-newest:
-	// 	constexpr uint32_t STEPS = 20;
-	// 	//draw from [STEPS, ..., 1]:
-	// 	for (uint32_t step = STEPS; step > 0; --step) {
-	// 		//time at which to draw the trail element:
-	// 		float t = step / float(STEPS) * trail_length;
-	// 		//advance ti until 'just before' t:
-	// 		while (ti != ball_trail.end() && ti->z > t) ++ti;
-	// 		//if we ran out of recorded tail, stop drawing:
-	// 		if (ti == ball_trail.end()) break;
-	// 		//interpolate between previous and current trail point to the correct time:
-	// 		glm::vec3 a = *(ti-1);
-	// 		glm::vec3 b = *(ti);
-	// 		glm::vec2 at = (t - a.z) / (b.z - a.z) * (glm::vec2(b) - glm::vec2(a)) + glm::vec2(a);
-
-	// 		//look up color using linear interpolation:
-	// 		//compute (continuous) index:
-	// 		float c = (step-1) / float(STEPS-1) * trail_colors.size();
-	// 		//split into an integer and fractional portion:
-	// 		int32_t ci = int32_t(std::floor(c));
-	// 		float cf = c - ci;
-	// 		//clamp to allowable range (shouldn't ever be needed but good to think about for general interpolation):
-	// 		if (ci < 0) {
-	// 			ci = 0;
-	// 			cf = 0.0f;
-	// 		}
-	// 		if (ci > int32_t(trail_colors.size())-2) {
-	// 			ci = int32_t(trail_colors.size())-2;
-	// 			cf = 1.0f;
-	// 		}
-	// 		//do the interpolation (casting to floating point vectors because glm::mix doesn't have an overload for u8 vectors):
-	// 		glm::u8vec4 color = glm::u8vec4(
-	// 			glm::mix(glm::vec4(trail_colors[ci]), glm::vec4(trail_colors[ci+1]), cf)
-	// 		);
-
-	// 		//draw:
-	// 		draw_rectangle(at, ball_radius, color);
-	// 	}
-	// }
-
-	//solid objects:
-
-	// //walls:
-	// draw_rectangle(glm::vec2(-court_radius.x-wall_radius, 0.0f), glm::vec2(wall_radius, court_radius.y + 2.0f * wall_radius), fg_color);
-	// draw_rectangle(glm::vec2( court_radius.x+wall_radius, 0.0f), glm::vec2(wall_radius, court_radius.y + 2.0f * wall_radius), fg_color);
-	// draw_rectangle(glm::vec2( 0.0f,-court_radius.y-wall_radius), glm::vec2(court_radius.x, wall_radius), fg_color);
-	// draw_rectangle(glm::vec2( 0.0f, court_radius.y+wall_radius), glm::vec2(court_radius.x, wall_radius), fg_color);
-
-	//box.positions:
-    float player_lean = 0.0f;
-    if (player_velocity.x > 0) {
-        player_lean = 0.05f;
-    }
-    else if (player_velocity.x < 0) {
-        player_lean = -0.05f;
-    }
-	
-    // hyperextended frames for that animation oomph
-    if (exaggerated_frames) {
-        player_lean *= 3.0f;
-        exaggerated_frames--;
-    }
-	draw_rectangle(player, player_radius, fg_color, player_lean);
-	// draw_rectangle(right_box.position, player_radius, fg_color);
-	
-
-	//ball:
-	draw_rectangle(ball, ball_radius, fg_color, 0);
-
-	//lives:
-	glm::vec2 lives_radius = glm::vec2(0.1f, 0.1f);
-	for (uint32_t i = 0; i < lives; ++i) {
-		draw_rectangle(glm::vec2( -court_radius.x + (2.0f + 3.0f * i) * lives_radius.x, court_radius.y + 2.0f * wall_radius + 2.0f * lives_radius.y), lives_radius, fg_color, 0);
+		// render player
+		draw_rectangle(player, player_radius, player_color, player_lean);
 	}
-	// for (uint32_t i = 0; i < right_score; ++i) {
-	// 	draw_rectangle(glm::vec2( court_radius.x - (2.0f + 3.0f * i) * lives_radius.x, court_radius.y + 2.0f * wall_radius + 2.0f * lives_radius.y), lives_radius, fg_color);
-	// }
 
+	// render B.O.U.N.C. projectile
+	draw_rectangle(ball, ball_radius, ball_color, 0);
 
+	// death count
+	glm::vec2 deaths_radius = glm::vec2(0.05f, 0.1f);
+	for (uint32_t i = 0; i < deaths; ++i) {
+		draw_rectangle(glm::vec2( -court_radius.x + (2.0f + 3.0f * i) * deaths_radius.x, court_radius.y + 2.0f * wall_radius + 2.0f * deaths_radius.y), deaths_radius, fg_color, 0);
+	}
+
+	// if game has ended, show deaths in binary
+	// because I didn't have time to do fonts
+	if (has_ended) {
+		std::vector<uint32_t> bits;
+		uint32_t d = deaths;
+		do {
+			bits.push_back(d % 2);
+			d /= 2;
+		} while (d > 0);
+
+		const float sep = 0.05f;
+		glm::vec2 start = glm::vec2((2 * zero_outer_radius.x + sep) * bits.size()/-2.0f, 3.0f);
+		for (auto it = bits.rbegin(); it != bits.rend(); ++it) {
+			if (*it) {
+				draw_rectangle(start, one_radius, fg_color, 0);
+			}
+			else {
+				draw_rectangle(start, zero_outer_radius, fg_color, 0);
+				draw_rectangle(start, zero_inner_radius, bg_color, 0);
+			}
+			start.x += 2 * zero_outer_radius.x + sep;
+		}
+	}
 
 	//------ compute court-to-window transform ------
 
@@ -585,7 +496,7 @@ void BouncMode::draw(glm::uvec2 const &drawable_size) {
 	);
 	glm::vec2 scene_max = glm::vec2(
 		court_radius.x + 2.0f * wall_radius + padding,
-		court_radius.y + 2.0f * wall_radius + 3.0f * lives_radius.y + padding
+		court_radius.y + 2.0f * wall_radius + 3.0f * deaths_radius.y + padding
 	);
 
 	//compute window aspect ratio:

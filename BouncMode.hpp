@@ -22,55 +22,78 @@ struct BouncMode : Mode {
 	virtual void draw(glm::uvec2 const &drawable_size) override;
 
 	//----- game state -----
-	float velocity_scale =4.0f;
+	// game configuration
+	const float velocity_scale = 4.0f;
+	const float jump_velocity = 5.0f;
+	const float bounce_velocity = 7.0f; // turn this down to <= 7.0f to make it extra frustrating!
+	const glm::vec2 gravity = glm::vec2(0.0f, -13.0f);
+	const glm::vec2 player_start = glm::vec2(-10.0f, 3.0f);
 
+	// AIR: player is in air, can be affected by gravity
+	// GROUND: player is on the ground, can't be affected by gravity
 	enum class PlayerState {
 		AIR,
 		GROUND
 	};
 
+	// CAN_HIT: ball can hit player for a B.O.U.N.C. jump
+	// FREE: ball will not collide with player
 	enum class BallState {
 		CAN_HIT,
 		FREE
 	};
 
+	// convenience struct for map boxes and collision
 	struct Box {
 		Box(const glm::vec2& position_, const glm::vec2& radius_) :
 			position(position_), radius(radius_) {}
 		glm::vec2 position;
 		glm::vec2 radius;
 	};
+
+	// randomly generated map geometry
 	std::vector<Box> boxes;
 	std::vector<Box> shadow_boxes;
 	std::vector<Box> shadow2_boxes;
 	std::vector<Box> stars;
 
-	Box moon_outline = Box(glm::vec2(-6.0f, 3.0f), glm::vec2(0.35f, 0.35f));
-	Box moon_core = Box(glm::vec2(-6.0f, 3.0f), glm::vec2(0.3f, 0.3f));
-	Box ground = Box(glm::vec2(0.0f, -7.0f), glm::vec2(10.0f, 1.0f));
+	// terrible night sky
+	const Box moon_outline = Box(glm::vec2(-6.0f, 3.0f), glm::vec2(0.35f, 0.35f));
+	const Box moon_core = Box(glm::vec2(-6.0f, 3.0f), glm::vec2(0.3f, 0.3f));
+	const Box ground = Box(glm::vec2(0.0f, -7.0f), glm::vec2(10.0f, 1.0f));
 
+	// state variables for player and ball
 	BallState ball_state = BallState::CAN_HIT;
 	PlayerState player_state = PlayerState::AIR;
-	glm::vec2 gravity = glm::vec2(0.0f, -13.0f);
+
+	// is there a pending jump or B.O.U.N.C. jump?
 	bool do_jump = false;
 	bool do_bounce_jump = false;
 
+	// has the game ended?
+	bool has_ended = false;
+
+	// player and area parameters
 	glm::vec2 court_radius = glm::vec2(10.0f, 5.0f);
 	glm::vec2 player_radius = glm::vec2(0.2f, 0.2f);
 	glm::vec2 ball_radius = glm::vec2(0.2f, 0.2f);
 
-	glm::vec2 player = glm::vec2(-10.0f, 3.0f);
+	glm::vec2 player = player_start;
 	glm::vec2 player_velocity = glm::vec2(0.0f, 0.0f);
-	bool player_is_colliding = true;
 
 	// spawn ball off screen
 	glm::vec2 ball = glm::vec2(0.0f, 30.0f);
 	glm::vec2 ball_velocity = glm::vec2(-1.0f, 0.0f);
 
-	uint32_t lives = 5;
+	uint32_t deaths = 0;
 
-	// for animation oomph
+	// frame counter for animation oomph
 	uint32_t exaggerated_frames = 0;
+
+	// "font library"
+	const glm::vec2 one_radius = glm::vec2(0.1f, 0.3f);
+	const glm::vec2 zero_outer_radius = glm::vec2(0.2f, 0.3f);
+	const glm::vec2 zero_inner_radius = glm::vec2(0.1f, 0.2f);
 
 	//----- opengl assets / helpers ------
 
