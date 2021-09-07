@@ -2,7 +2,7 @@
 
 Author: Siddharth Sahay (ssahay2)
 
-Design: B.O.U.N.C. is a mildly frustrating platformer with a bounce-based mobility mechanic - you can move and jump like in any other platformer, but to reach more difficult places you do a B.O.U.N.C. jump - bounce a projectile off the ground and use it to launch yourself higher into the air. The projectile gives the player a vertical boost regardless of angle of collision (deliberately). The objective is to cross the rooftops with the fewest number of deaths. Also, the slightly tilted angle of the buildings is deliberate.
+Design: B.O.U.N.C. ("bounce") is a mildly frustrating platformer with a bounce-based mobility mechanic - you can move and jump like in any other platformer, but to reach more difficult places you do a Bionically Orthographic Unladen Nitrous Capering (B.O.U.N.C.) jump - bounce a projectile off the ground and use it to launch yourself higher into the air. The projectile gives the player a vertical boost regardless of angle of collision (deliberately). The objective is to cross the rooftops with the fewest number of deaths. Also, the slightly tilted angle of the buildings is deliberate.
 
 Screen Shot:
 
